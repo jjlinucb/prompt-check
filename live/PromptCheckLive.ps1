@@ -31,6 +31,12 @@ public class PromptCheckLive : Form {
     { "low", "Low" }, { "medium", "Medium" }, { "high", "High" }, { "xhigh", "Extra high" }, { "max", "Max" } };
   static readonly Dictionary<string, string> CheckNames = new Dictionary<string, string> {
     { "goal", "goal" }, { "context", "context" }, { "format", "format" }, { "constraints", "limits" } };
+  // What the Claude app's own effort button calls each level ("Effort: Extra"), lowest first.
+  static readonly string[] EffortOrder = { "low", "medium", "high", "xhigh", "max" };
+  static readonly Dictionary<string, string> AppEffortNames = new Dictionary<string, string> {
+    { "low", "Low" }, { "medium", "Medium" }, { "high", "High" }, { "xhigh", "Extra" }, { "max", "Max" } };
+  static readonly string LogPath = Path.Combine(Path.GetTempPath(), "prompt-check-live.log");
+  const string RegKey = @"HKEY_CURRENT_USER\Software\PromptCheckLive";
 
   readonly NotifyIcon tray = new NotifyIcon();
   readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
@@ -47,6 +53,11 @@ public class PromptCheckLive : Form {
   WebClient inflight;
   string head = "", rest = "", detail = "";
   Color headColor;
+  bool autoEffort;
+  string suggText, suggLevel; bool suggShaky; // latest grade, waiting for a pause
+  string weSet;        // the level this overlay set for the message being written
+  bool userOverrode;   // you moved the slider yourself after that: hands off until you send
+  Dictionary<string, object> lastResult;
 
   // Never take focus or clicks from Claude, and stay out of the taskbar and Alt+Tab.
   protected override bool ShowWithoutActivation { get { return true; } }
@@ -83,6 +94,17 @@ public class PromptCheckLive : Form {
       if (paused) { HideOverlay(); Cancel(); }
     };
     menu.MenuItems.Add(pause);
+    object saved = Microsoft.Win32.Registry.GetValue(RegKey, "AutoEffort", 1);
+    autoEffort = !(saved is int && (int)saved == 0);
+    MenuItem auto = new MenuItem("Set effort automatically");
+    auto.Checked = autoEffort;
+    auto.Click += delegate {
+      autoEffort = !autoEffort;
+      auto.Checked = autoEffort;
+      Microsoft.Win32.Registry.SetValue(RegKey, "AutoEffort", autoEffort ? 1 : 0);
+      if (lastResult != null) Render(lastResult);
+    };
+    menu.MenuItems.Add(auto);
     menu.MenuItems.Add("-");
     menu.MenuItems.Add("Quit Prompt Check Live", delegate { tray.Visible = false; Application.Exit(); });
     tray.Icon = SystemIcons.Information;
@@ -135,7 +157,11 @@ public class PromptCheckLive : Form {
       box = el.Current.BoundingRectangle;
     } catch { HideOverlay(); return; } // the box went away mid-read
     if (box.IsEmpty) { HideOverlay(); return; }
-    if (text.Length == 0) { lastText = ""; pending = false; Cancel(); HideOverlay(); return; }
+    if (text.Length == 0) { // sent or cleared: the next message starts fresh
+      lastText = ""; pending = false; Cancel(); HideOverlay();
+      suggText = null; weSet = null; userOverrode = false; lastResult = null;
+      return;
+    }
     if (text != lastText) {
       if (lastText.Length == 0) Message("Checking…", "");
       lastText = text; changedAt = DateTime.Now; pending = true;
@@ -146,6 +172,111 @@ public class PromptCheckLive : Form {
       pending = false;
       Check(text);
     }
+    // Wait for a one-second pause, so the popover never opens while you're mid-sentence.
+    if (autoEffort && !userOverrode && !pending && suggText != null && suggText == text && !suggShaky
+        && (DateTime.Now - changedAt).TotalMilliseconds >= 1000) {
+      string level = suggLevel;
+      suggText = null;
+      try { ApplyEffort(level, el); } catch (Exception ex) { Log("effort: failed: " + ex.Message); }
+    }
+  }
+
+  static void Log(string line) {
+    try { File.AppendAllText(LogPath, DateTime.Now.ToString("s") + " " + line + Environment.NewLine); } catch { }
+  }
+
+  // Claude's effort control: a button named "Effort: <level>" that opens a popover with a slider.
+  // On the Mac, stepping the slider moves the button's name with it and Escape closes the popover.
+  // The Windows tree is assumed to match; every step is logged so a mismatch shows up in the log.
+  static string EffortLevelOf(AutomationElement b) {
+    string n = b.Current.Name ?? "";
+    if (!n.StartsWith("Effort: ")) return null;
+    string name = n.Substring("Effort: ".Length).Trim();
+    foreach (KeyValuePair<string, string> kv in AppEffortNames)
+      if (string.Equals(kv.Value, name, StringComparison.OrdinalIgnoreCase)) return kv.Key;
+    return null;
+  }
+
+  // Search outward from the message box, so with two sessions side by side the one it belongs to moves.
+  static AutomationElement EffortButton(AutomationElement box) {
+    TreeWalker walk = TreeWalker.ControlViewWalker;
+    Condition kinds = new OrCondition(
+      new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button),
+      new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ComboBox),
+      new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.MenuItem));
+    AutomationElement node = box;
+    for (int i = 0; i < 12; i++) {
+      node = walk.GetParent(node);
+      if (node == null || node == AutomationElement.RootElement) return null;
+      foreach (AutomationElement b in node.FindAll(TreeScope.Descendants, kinds))
+        if (EffortLevelOf(b) != null) return b;
+    }
+    return null;
+  }
+
+  static int Index(string level) { return Array.IndexOf(EffortOrder, level); }
+
+  // Lowering is always done for you. Raising is done only as far as High; Extra and Max stay a
+  // suggestion, since they cost the most and the grade is a guess about the task, not the result.
+  static string AutoTarget(string suggested, string current) {
+    int s = Index(suggested), c = Index(current), high = Index("high");
+    if (s < 0 || c < 0) return null;
+    if (s < c) return suggested;
+    if (s > c && c < high) return EffortOrder[Math.Min(s, high)];
+    return null;
+  }
+
+  void ApplyEffort(string level, AutomationElement box) {
+    AutomationElement button = EffortButton(box);
+    string current = button == null ? null : EffortLevelOf(button);
+    if (current == null) { Log("effort: no effort button next to this message box"); return; }
+    if (weSet != null && current != weSet) { userOverrode = true; Log("effort: you changed it to " + current + "; leaving it"); return; }
+    string target = AutoTarget(level, current);
+    if (target == null) { Log("effort: suggested " + level + ", at " + current + "; no change by the rules"); return; }
+    weSet = SetEffort(target, button, box);
+    Log("effort: suggested " + level + ", was " + current + ", asked " + target + ", now " + (weSet ?? "?"));
+    if (lastResult != null) Render(lastResult);
+  }
+
+  // Opens the popover, steps the slider to target, closes it, and puts focus back in the box.
+  static string SetEffort(string target, AutomationElement button, AutomationElement box) {
+    string now = EffortLevelOf(button);
+    int to = Index(target);
+    object p;
+    if (button.TryGetCurrentPattern(InvokePattern.Pattern, out p)) ((InvokePattern)p).Invoke();
+    else if (button.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out p)) ((ExpandCollapsePattern)p).Expand();
+    else { Log("effort: the button can't be pressed through UI Automation"); return now; }
+    AutomationElement window = box;
+    TreeWalker walk = TreeWalker.ControlViewWalker;
+    for (AutomationElement up = walk.GetParent(window); up != null && up != AutomationElement.RootElement; up = walk.GetParent(up)) window = up;
+    AutomationElement slider = null;
+    Condition isSlider = new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Slider);
+    for (int i = 0; i < 10 && slider == null; i++) {
+      Thread.Sleep(60);
+      foreach (AutomationElement s in window.FindAll(TreeScope.Descendants, isSlider))
+        if ((s.Current.Name ?? "").StartsWith("Effort")) { slider = s; break; }
+    }
+    // Escape is sent only when the popover is known to be open: in the message box itself it would
+    // stop a reply that's still running.
+    if (slider == null) { Log("effort: pressed the button but found no Effort slider"); return EffortLevelOf(button); }
+    RangeValuePattern range = slider.TryGetCurrentPattern(RangeValuePattern.Pattern, out p) ? (RangeValuePattern)p : null;
+    if (range == null) Log("effort: the slider can't be set through UI Automation");
+    for (int i = 0; range != null && i < EffortOrder.Length; i++) {
+      int from = Index(now);
+      if (from < 0 || from == to) break;
+      double step = range.Current.SmallChange > 0 ? range.Current.SmallChange : 1;
+      double next = range.Current.Value + (from < to ? step : -step);
+      if (next < range.Current.Minimum || next > range.Current.Maximum) break;
+      range.SetValue(next);
+      Thread.Sleep(120);
+      string moved = EffortLevelOf(button);
+      if (moved == null || moved == now) break; // didn't move: stop
+      now = moved;
+    }
+    SendKeys.SendWait("{ESC}");
+    Thread.Sleep(150);
+    try { box.SetFocus(); } catch { }
+    return EffortLevelOf(button);
   }
 
   void Cancel() { if (inflight != null) { inflight.CancelAsync(); inflight = null; } }
@@ -167,7 +298,13 @@ public class PromptCheckLive : Form {
           using (StreamReader r = new StreamReader(we.Response.GetResponseStream())) body = r.ReadToEnd();
       }
       if (body == null) { Message("Prompt Check server isn't running", "Double-click Prompt Check Live.cmd"); return; }
-      try { Render(json.Deserialize<Dictionary<string, object>>(body)); }
+      try {
+        Dictionary<string, object> d = json.Deserialize<Dictionary<string, object>>(body);
+        lastResult = d;
+        Dictionary<string, object> ef = Obj(d, "effort");
+        if (ef != null && Str(ef, "level").Length > 0) { suggText = text; suggLevel = Str(ef, "level"); suggShaky = Str(ef, "shaky") == "True"; }
+        Render(d);
+      }
       catch (Exception ex) { Message("Can't read the reply", ex.Message); }
     };
     inflight = wc;
@@ -197,6 +334,9 @@ public class PromptCheckLive : Form {
     if (!EffortNames.TryGetValue(Str(e, "level"), out level)) level = "?";
     head = Str(v, "label");
     rest = "  ·  Run at " + level + (shaky ? " (guess)" : "");
+    string setName;
+    if (autoEffort && weSet != null && EffortNames.TryGetValue(weSet, out setName))
+      rest = weSet == Str(e, "level") ? "  ·  Effort set to " + setName : "  ·  Set to " + setName + " · " + level + " suggested";
 
     // New tasks list what's missing; replies and questions show the verdict's note instead.
     List<string> parts = new List<string>();

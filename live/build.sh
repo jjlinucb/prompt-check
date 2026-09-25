@@ -1,6 +1,9 @@
 #!/bin/bash
 # Builds "Prompt Check Live.app" next to this script: a menu-bar-only app (no Dock icon).
-# Rebuilding changes its signature, so macOS asks for Accessibility permission again.
+# macOS ties the Accessibility permission to the signature. With the default ad-hoc signature every
+# rebuild looks like a new app and loses it. Create a code-signing certificate named
+# "Prompt Check Local" once (Keychain Access > Certificate Assistant > Create a Certificate,
+# Certificate Type: Code Signing) and every build is signed with it, so the permission sticks.
 set -euo pipefail
 cd "$(dirname "$0")"
 APP="Prompt Check Live.app"
@@ -19,5 +22,15 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>13.0</string>
 </dict></plist>
 PLIST
-codesign --force --sign - "$APP" >/dev/null
+# Otherwise any code-signing certificate already on the Mac will do; PCL_SIGN_IDENTITY picks one.
+IDENTITY="${PCL_SIGN_IDENTITY:-Prompt Check Local}"
+if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "\"$IDENTITY\""; then
+  IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(.*\)"$/\1/p' | head -1)"
+fi
+if [ -n "$IDENTITY" ]; then
+  codesign --force --sign "$IDENTITY" "$APP" >/dev/null
+else
+  codesign --force --sign - "$APP" >/dev/null
+  echo "signed ad-hoc: approve Accessibility again after this build (no code-signing certificate found)"
+fi
 echo "built $PWD/$APP"
