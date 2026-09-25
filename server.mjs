@@ -158,6 +158,19 @@ function effort(a) {
   return { level, score: e.score, confidence: e.confidence, probabilities: e.probabilities, shaky };
 }
 
+// Policy: only worth a note when the mismatch is stark. Day to day the model is already Sonnet 5
+// or Opus 5.5, which covers everything in between, so this stays quiet unless the task is either
+// trivial (Haiku 4.5 does it for less) or high-stakes enough to want Opus 5.5 specifically. Never
+// fires on a shaky guess.
+function modelHint(e) {
+  if (e.shaky) return null;
+  if (e.level === "low" && e.confidence >= 0.6)
+    return "Trivial enough for Haiku 4.5 — cheaper and faster than Sonnet 5 or Opus 5.5 here.";
+  if (e.level === "max" && e.confidence >= 0.6)
+    return "High-stakes enough to make sure you're on Opus 5.5, not Sonnet 5.";
+  return null;
+}
+
 // Policy: code decides what to tell the writer. Cut-offs set 2026-09-25 from ten live prompts:
 // vague ones score near 0, workable agent prompts 1.8 to 2.2. Retune on your own prompts.
 const KIND_LABEL = { follow_up: "follow-up", reply: "reply", question: "question" };
@@ -199,6 +212,7 @@ async function check(prompt, given) {
   }
   const inTok = body.usage?.input_tokens ?? 0;
   logUsage({ at: new Date().toISOString(), model: body.model, input_tokens: inTok, ms, kind: body.answers.kind.choice });
+  const eff = effort(body.answers);
   return {
     model: body.model,
     ms,
@@ -212,7 +226,8 @@ async function check(prompt, given) {
       : [],
     padded: padded(body.answers, prompt),
     verdict: verdict(body.answers, prompt),
-    effort: effort(body.answers),
+    effort: eff,
+    modelHint: modelHint(eff),
     answers: body.answers,
   };
 }

@@ -207,6 +207,9 @@ public class PromptCheckLive : Form {
     if (missing.Count > 0) parts.Add("Missing: " + string.Join(", ", missing));
     else if (Str(v, "note").Length > 0) parts.Add(Str(v, "note").TrimEnd('.'));
     if (Str(d, "padded") == "True") parts.Add("wordy");
+    // Rare and worth surfacing even in this small a space: the model, not just the effort, is wrong.
+    string modelHint = Str(d, "modelHint");
+    if (modelHint.Length > 0) parts.Add(modelHint);
     parts.Add(Str(d, "ms") + " ms");
     detail = string.Join(" · ", parts);
     Invalidate();

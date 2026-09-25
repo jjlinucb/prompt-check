@@ -49,6 +49,7 @@
   .level b { display: block; color: var(--ink); font-weight: 600; }
   .level.on { border-top-color: var(--fill); }
   .scorenote { font-size: 13px; color: var(--muted); margin-bottom: 28px; }
+  .modelhint { font-size: 13px; font-weight: 600; color: var(--warn); margin: -20px 0 28px; }
   .rows { border-top: 1px solid var(--rule); }
   .row { display: grid; grid-template-columns: 1fr 120px 44px; align-items: center; gap: 12px;
     padding: 10px 0; border-bottom: 1px solid var(--rule); }
@@ -93,6 +94,7 @@
     <h3>Effort</h3>
     <div class="scale five" id="escale"></div>
     <div class="scorenote" id="enote"></div>
+    <p class="modelhint" id="modelhint" hidden></p>
 
     <h3>Specificity</h3>
     <div class="scale" id="scale"></div>
@@ -191,6 +193,9 @@ function render(d) {
   fillScale("#escale", ef.probabilities);
   $("enote").textContent =
     `Score ${ef.score.toFixed(2)} of 4 · confidence ${ef.confidence.toFixed(2)}`;
+  const hint = $("modelhint");
+  hint.textContent = d.modelHint || "";
+  hint.hidden = !d.modelHint;
 
   fillScale("#scale", a.specificity.probabilities);
   $("scorenote").textContent =
