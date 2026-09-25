@@ -1,0 +1,3 @@
+# Windows files keep CRLF and the .ps1 keeps its UTF-8 BOM (PowerShell 5.1 needs it).
+*.cmd -text
+*.ps1 -text

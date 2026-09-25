@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prompt Check</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,600&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #fbfbfa; --ink: #16181d; --muted: #5d6270; --rule: #d9dbe0; --field: #ffffff;
+    --bar: #e7e8ec; --ok: #1f7a4d; --warn: #a15c07; --bad: #b3261e; --fill: #16181d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121418; --ink: #e9eaee; --muted: #9a9fac; --rule: #2c3038; --field: #1a1d23;
+      --bar: #262a32; --ok: #4cc38a; --warn: #e3a44b; --bad: #f07167; --fill: #e9eaee;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.5 "Source Sans 3", "Helvetica Neue", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 40px 16px 64px; }
+  h1 { font: 600 30px/1.2 "Source Serif 4", Georgia, serif; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  textarea { width: 100%; min-height: 180px; resize: vertical; padding: 14px 16px;
+    font: 16px/1.5 "Source Sans 3", sans-serif; color: var(--ink); background: var(--field);
+    border: 1px solid var(--rule); border-radius: 6px; }
+  textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; }
+  .meta { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    color: var(--muted); font-size: 13px; margin: 8px 0 28px; min-height: 20px; }
+  .head { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; border-top: 2px solid var(--ink);
+    padding-top: 14px; margin-bottom: 28px; }
+  .head .k { font-size: 13px; color: var(--muted); margin: 0 0 2px; }
+  .verdict h2, .effort h2 { font: 600 24px/1.2 "Source Serif 4", Georgia, serif; margin: 0 0 2px; }
+  .verdict p, .effort p { margin: 0; color: var(--muted); font-size: 14px; }
+  .effort.shaky h2 { color: var(--muted); }
+  .actions { display: flex; align-items: center; gap: 12px; }
+  button { font: 600 14px "Source Sans 3", sans-serif; color: var(--ink); background: var(--field);
+    border: 1px solid var(--ink); border-radius: 4px; padding: 6px 14px; cursor: pointer; }
+  button:hover { background: var(--bar); }
+  .scale.five { grid-template-columns: repeat(5, 1fr); }
+  .verdict[data-k="ready"] h2 { color: var(--ok); }
+  .verdict[data-k="almost"] h2, .verdict[data-k="padded"] h2 { color: var(--warn); }
+  .verdict[data-k="missing"] h2 { color: var(--bad); }
+  h3 { font-size: 15px; font-weight: 600; margin: 0 0 10px; }
+  .scale { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
+  .level { border-top: 4px solid var(--bar); padding-top: 6px; font-size: 13px; color: var(--muted); }
+  .level b { display: block; color: var(--ink); font-weight: 600; }
+  .level.on { border-top-color: var(--fill); }
+  .scorenote { font-size: 13px; color: var(--muted); margin-bottom: 28px; }
+  .rows { border-top: 1px solid var(--rule); }
+  .row { display: grid; grid-template-columns: 1fr 120px 44px; align-items: center; gap: 12px;
+    padding: 10px 0; border-bottom: 1px solid var(--rule); }
+  .row .q { font-size: 15px; }
+  .track { height: 6px; background: var(--bar); border-radius: 3px; overflow: hidden; }
+  .track i { display: block; height: 100%; background: var(--fill); width: 0; transition: width .15s ease-out; }
+  .pct { text-align: right; font-variant-numeric: tabular-nums; font-size: 14px; }
+  .row.inverse .track i { background: var(--warn); }
+  .notice { border-left: 3px solid var(--bad); padding: 8px 12px; margin-bottom: 24px; }
+  .notice code { font-size: 14px; }
+  .idle { color: var(--muted); }
+  [hidden] { display: none !important; }
+  @media (max-width: 520px) {
+    main { padding-top: 20px; } h1 { font-size: 24px; } .sub { display: none; }
+    .row { grid-template-columns: 1fr 80px 40px; } .scale { gap: 4px; }
+    .level { font-size: 12px; } .verdict h2, .effort h2 { font-size: 21px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Prompt Check</h1>
+  <p class="sub">Type the prompt you're about to send to Claude. Jev grades it as you type and says which effort level to run it at.</p>
+
+  <div class="notice" id="nokey" hidden>
+    No API key loaded. Put <code>TYPESAFE_API_KEY=…</code> in <code>prompt-check/.env</code> and restart the server.
+  </div>
+
+  <textarea id="prompt" spellcheck="true" autofocus
+    placeholder="e.g. The login test in tests/login.spec.ts fails on CI but passes locally since the Playwright upgrade. Find out why and fix it without skipping the test."></textarea>
+  <div class="meta">
+    <span class="actions"><button id="copy" type="button" title="⌘/Ctrl + Enter">Copy prompt</button><span id="status" class="idle">Waiting for text</span></span>
+    <span id="usage"></span>
+  </div>
+
+  <section id="results" hidden>
+    <div class="head">
+      <div class="verdict" id="verdict"><p class="k">Prompt</p><h2></h2><p class="note"></p></div>
+      <div class="effort" id="effort"><p class="k">Run at effort</p><h2></h2><p class="note"></p></div>
+    </div>
+
+    <h3>Effort</h3>
+    <div class="scale five" id="escale"></div>
+    <div class="scorenote" id="enote"></div>
+
+    <h3>Specificity</h3>
+    <div class="scale" id="scale"></div>
+    <div class="scorenote" id="scorenote"></div>
+
+    <h3>What's there</h3>
+    <div class="rows" id="rows"></div>
+  </section>
+</main>
+<script>
+const LEVELS = ["Vague", "Thin", "Workable", "Complete"];
+// Same order as the Claude app's effort menu: low, medium, high, xhigh, max.
+const EFFORTS = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
+const EFFORT_NOTES = {
+  low: "Lookup, rename, or small edit",
+  medium: "Routine task with a clear path",
+  high: "Debugging, design, or several files",
+  xhigh: "Long multi-step agent work",
+  max: "Hardest problems; correctness over cost",
+};
+const CHECKS = [
+  ["goal", "States the goal"],
+  ["context", "Includes the context the task depends on"],
+  ["format", "Says what form the result takes"],
+  ["constraints", "States limits or things to avoid"],
+  ["padded", "Repeats itself or carries filler", true],
+];
+const $ = (id) => document.getElementById(id);
+const pct = (p) => Math.round(p * 100) + "%";
+
+$("escale").innerHTML = Object.values(EFFORTS).map((l, i) => `<div class="level" data-i="${i}"><b>${l}</b><span>0%</span></div>`).join("");
+$("scale").innerHTML = LEVELS.map((l, i) => `<div class="level" data-i="${i}"><b>${l}</b><span>0%</span></div>`).join("");
+$("rows").innerHTML = CHECKS.map(([k, q, inv]) =>
+  `<div class="row${inv ? " inverse" : ""}" data-k="${k}"><span class="q">${q}</span><span class="track"><i></i></span><span class="pct">–</span></div>`).join("");
+
+fetch("/api/status").then(r => r.json()).then(s => { if (!s.hasKey) $("nokey").hidden = false; });
+
+let timer = null, inflight = null, seq = 0;
+$("prompt").addEventListener("input", () => {
+  clearTimeout(timer);
+  timer = setTimeout(run, 250); // debounce keystrokes
+});
+
+async function copyPrompt() {
+  const b = $("copy");
+  try {
+    await navigator.clipboard.writeText($("prompt").value);
+    b.textContent = "Copied";
+  } catch {
+    b.textContent = "Copy failed";
+  }
+  setTimeout(() => (b.textContent = "Copy prompt"), 1200);
+}
+$("copy").addEventListener("click", copyPrompt);
+$("prompt").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); copyPrompt(); }
+});
+
+async function run() {
+  const text = $("prompt").value.trim();
+  if (inflight) inflight.abort(); // a newer keystroke wins
+  if (!text) { $("results").hidden = true; setStatus("Waiting for text", true); $("usage").textContent = ""; return; }
+  const my = ++seq;
+  inflight = new AbortController();
+  setStatus("Checking…", true);
+  try {
+    const r = await fetch("/api/check", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: text }), signal: inflight.signal,
+    });
+    const data = await r.json();
+    if (my !== seq) return;
+    if (!r.ok) { setStatus(data.error || `Error ${r.status}`); return; }
+    render(data);
+  } catch (e) {
+    if (e.name !== "AbortError") setStatus("Could not reach the local server");
+  }
+}
+
+function setStatus(msg, idle) { const s = $("status"); s.textContent = msg; s.className = idle ? "idle" : ""; }
+
+function render(d) {
+  const a = d.answers;
+  $("results").hidden = false;
+  const v = $("verdict");
+  v.dataset.k = d.verdict.key;
+  v.querySelector("h2").textContent = d.verdict.label;
+  v.querySelector(".note").textContent = d.verdict.note;
+
+  const ef = d.effort, eb = $("effort");
+  eb.classList.toggle("shaky", ef.shaky);
+  eb.querySelector("h2").textContent = EFFORTS[ef.level];
+  eb.querySelector(".note").textContent = ef.shaky
+    ? "A guess until the prompt says more about the task"
+    : EFFORT_NOTES[ef.level];
+  fillScale("#escale", ef.probabilities);
+  $("enote").textContent =
+    `Score ${ef.score.toFixed(2)} of 4 · confidence ${ef.confidence.toFixed(2)}`;
+
+  fillScale("#scale", a.specificity.probabilities);
+  $("scorenote").textContent =
+    `Score ${a.specificity.score.toFixed(2)} of 3 · confidence ${a.specificity.confidence.toFixed(2)} (how concentrated the levels are, not whether the grade is right)`;
+
+  document.querySelectorAll(".row").forEach(row => {
+    const p = a[row.dataset.k].noul;
+    row.querySelector("i").style.width = pct(p);
+    row.querySelector(".pct").textContent = pct(p);
+  });
+
+  setStatus(`${d.model} · ${d.ms} ms`, true);
+  $("usage").textContent = `${d.usage.input_tokens} tokens in · $${d.costUsd.toFixed(6)}`;
+}
+
+function fillScale(sel, probs) {
+  const top = Object.entries(probs).sort((x, y) => y[1] - x[1])[0][0];
+  document.querySelectorAll(`${sel} .level`).forEach(el => {
+    const p = probs[el.dataset.i] ?? 0;
+    el.querySelector("span").textContent = pct(p);
+    el.classList.toggle("on", el.dataset.i === top);
+  });
+}
+</script>
+</body>
+</html>
