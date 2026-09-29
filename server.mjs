@@ -233,7 +233,8 @@ async function check(prompt, given) {
 }
 
 // Spend log: one line per Jev call with tokens and time, never the prompt text.
-const USAGE_FILE = join(here, "usage.jsonl");
+// live/login.sh runs a copy of this file from Application Support and names the log beside it.
+const USAGE_FILE = process.env.PROMPT_CHECK_USAGE ?? join(here, "usage.jsonl");
 function logUsage(row) {
   try { appendFileSync(USAGE_FILE, JSON.stringify(row) + "\n"); } catch { /* read-only folder: skip */ }
 }

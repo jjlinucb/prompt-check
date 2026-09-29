@@ -51,6 +51,12 @@ A `TYPESAFE_API_KEY` environment variable, or a `.env` beside `server.mjs`, also
 
 Double-click the file. Each launcher starts the local server if it isn't running.
 
+**Start at login (Mac).** `bash live/login.sh on` runs the server and opens the overlay at every
+login, and restarts the server if it stops. macOS keeps login jobs out of `~/Documents`, so the
+server runs from a copy in `~/Library/Application Support/Prompt Check`, and its spend log moves
+there. The Live launcher refreshes that copy when `server.mjs` or `index.html` changes.
+`bash live/login.sh off` undoes it.
+
 **Mac.** The first launch builds `live/Prompt Check Live.app` from `live/PromptCheckLive.swift`
 (needs the Xcode command line tools), and macOS asks you to allow it under Privacy & Security →
 Accessibility, which is how it reads Claude's message box. A rebuild asks again. Pause and Quit are
