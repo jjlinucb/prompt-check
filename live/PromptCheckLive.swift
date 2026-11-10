@@ -184,7 +184,7 @@ final class Watcher: NSObject {
 
   func start() {
     status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    status.button?.title = "Jev"
+    setIcon("text.badge.checkmark", "Jev")
     let menu = NSMenu()
     menu.addItem(NSMenuItem(title: "Pause", action: #selector(togglePause(_:)), keyEquivalent: "p"))
     let auto = NSMenuItem(title: "Set effort automatically", action: #selector(toggleAuto(_:)), keyEquivalent: "e")
@@ -197,7 +197,7 @@ final class Watcher: NSObject {
     status.menu = menu
     let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
     if !AXIsProcessTrustedWithOptions(opts) {
-      status.button?.title = "Jev: needs Accessibility"
+      setIcon("exclamationmark.triangle", "Jev: needs Accessibility")
     }
     Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in self?.tick() }
   }
@@ -205,8 +205,17 @@ final class Watcher: NSObject {
   @objc func togglePause(_ item: NSMenuItem) {
     paused.toggle()
     item.title = paused ? "Resume" : "Pause"
-    status.button?.title = paused ? "Jev (paused)" : "Jev"
+    setIcon(paused ? "pause.circle" : "text.badge.checkmark", paused ? "Jev (paused)" : "Jev")
     if paused { overlay.hide(); task?.cancel() }
+  }
+
+  // An icon takes less menu bar room than the word "Jev"; the name moves to the tooltip.
+  func setIcon(_ symbol: String, _ tip: String) {
+    let img = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+    img?.isTemplate = true
+    status.button?.image = img
+    status.button?.title = ""
+    status.button?.toolTip = tip
   }
 
   @objc func toggleAuto(_ item: NSMenuItem) {
