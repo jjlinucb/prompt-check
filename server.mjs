@@ -8,7 +8,9 @@ import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 4747);
-const MODEL = process.env.TYPESAFE_MODEL ?? "jev-latest";
+// Pinned: jev-latest moved to jev-1.14.0 on 2026-10-14, which scored worse than 1.13 on every
+// john-jev-lab tool's held-out set (john-jev-lab#38). Re-run an eval before moving this.
+const MODEL = process.env.TYPESAFE_MODEL ?? "jev-1.13.0";
 const BASE_URL = process.env.TYPESAFE_BASE_URL ?? "https://api.typesafe.ai";
 const PRICE_PER_MTOK = 0.042; // jev-1.13 input price; output is free
 const MAX_CHARS = 24_000; // stays well under the 32k state + question budget
